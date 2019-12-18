@@ -1,0 +1,543 @@
+#!/bin/bash
+# This program performs five functions. 
+# 1: It can calculate the dimensions of a matrix passed in as an argument or put into stdin.
+# 2: It will transpose a matrix that has been passed in as an argument or put into stdin
+# 3: It takes a MxN matrix and generates a 1xN row vector where each element is the mean of its respective column (i.e
+# element 1 is the mean of column 1, element 2 is the mean of column 2)
+# 4: It takes two passed in matrices and adds them together if their dimensions allow for that
+# 5: It takes two passed in matrices and multiplies them against each other if their dimensions allow for that
+
+# Dims function:  Dims takes a matrix, calculates its dimensions, and then prints them (row followed by column).  It counts the number of elements
+# in the first row and uses this as the column count.  It then counts the number of elements in the first column, and uses this as the row count
+# If the string "m1" is passed in as the second argument, it stores the column count in the file "colCountFile" and the row count in 
+# the file "rowCountFile".  If the string "m2" is passed in as the second argument, the function stores the column count in the file 
+# "colCountFile2" and the row count in the file "rowCountFile2".  If the second argument is neither of these things, the dimensions are
+# simply printed out
+# receives: #1 = Matrix, #2 = a string that tells dims what do with the dimensions that it has generated
+# output/returns: Dims will either store matris dimensional data in temporary files or print the data.  It depends on the second argument is 
+# preconditions: Dims must be passed a readable proper matrix.  It doesn't do any error checking on its own, so that needs to be handled by whatever calls dims
+# misc: n/a
+dims() {
+	# initializing rowcount and colcount to 0
+	rowcount=0
+	colcount=0
+	# using a while loop with read to iterate through each row/line of our matrix.  
+	while read matrix
+	do
+		# as we iterate through the rows of the passed in matrix, we increment rowcount by 1
+		rowcount=$((rowcount + 1))
+		# In the first row, we count the number of columns, by counting how many elements there are in the row
+		if test $rowcount -eq 1
+		then
+			# for every element in the row, we increment colcount by 1
+			for i in $matrix
+			do
+			colcount=$((colcount + 1))
+			done
+		fi
+	done <$1
+# other functions require dimensional data to be stored in temporary files, so dims has the ability to populate two sets of temporary files
+# with row and column data (multiply and add require dimensional data for multiple matrices)
+if [ $2 = "m1" ]
+then
+	echo $colcount > "colCountFile"
+	echo $rowcount > "rowCountFile"
+elif [ $2 = "m2" ]
+then
+	echo $colcount > "colCountFile2"
+	echo $rowcount > "rowCountFile2"
+# Dims can also simply print the row and column count of the matrix that it is processing.
+else
+	echo "$rowcount $colcount"
+fi
+}
+
+# Transpose function: Transpose takes a matrix and reflects it along the main diagonal (meaning a MxN matrix becomes a NxM matrix).  If transpose receives the string
+# "print" as a second argument, it will print out the matrix that it has generated.  If it doesn't receive "print", it will simply store the newly transposed matrix in a
+# temporary file (mean, add, and multiply all require transposed matrices).
+# receives: #1 = Matrix, #2 = a string (if the string is "print", transpose will print the matrix)
+# output/returns: Transpose can print the matrix that is it has generated if it receives the correct arguments.  Otherwise, it simply stores the matrix in a temporary variable
+# preconditions: Transpose requires dimensional data, so it is necessary to run that matrix that is to be transposed through dims first.  Also, transpose doesn't do any
+# error checking, so whatever calls it must make sure that things are in readable files and are proper matrices.
+# misc: 
+transpose () {
+	# setting the variable matrix to equal the first argument (the passed in matrix)
+	matrix=$1
+	# tempCol points to a temporary file that stores an individual column that has been copied from the passed in matrix
+	tempCol="columnTest$$"
+	# The transposed matrix will be stored in a file called newMatrix.  The variable tempMatrix points to this file
+	tempMatrix="newMatrix$$"
+	# The column that is stored in tempCol is turned into a row and stored in a temporary file that tempStore points to
+	tempStore="tempFile$$"
+	# We need the column count of the matrix that is going to be transposed.  It is stored in the variable tempCol
+	read cols < "colCountFile"
+	# count is initialized to 1.  It is used to help run the while loop that constructs the transposed matrix (it is compared 
+	# againt the column count of the passed in matrix.  It is incremented by 1 in each loop and when it exceeds the column count
+	# the while loop ends).  It is also used to select the appropriate column to "cut" from the matrix
+	count=1
+	while [ $count -le $cols ]
+	do
+		# Taking an individual column (in the first loop, we get the first column, in the second, we get the second column and so on).
+		# and storing it in the file that tempCol points to
+		cut -f$count $matrix > $tempCol
+		# We take the column in tempCol and use the tr command to turn it into a row.  This is accomplished by turning every newline into a tab.  The result
+		# is then stored in the temporary file that tempStore points to
+		cat $tempCol | tr '\n' '\t' > $tempStore
+		# using the read command to take the contents of the file that tempStore points to and moving it to the variable line
+		read line < $tempStore
+		# We then use echo and redirection to append the newly generated row to the file that tempMatrix points to
+		echo "$line" >> $tempMatrix
+		# Count is incremented by 1 so the next column is cut and the while loop ends at the appropriate time
+		count=$((count + 1))
+	done
+	# if the string "print" is passed as the second argument to transpose, the transposed matrix will be printed out
+	if [ $2 = "print" ]
+	then
+		cat $tempMatrix
+	fi
+	# Storing the newly transposed matrix into a temporary file called matrixcopy
+	cat $tempMatrix > "matrixcopy"
+	# Cleaning up temporary files
+	rm -f $tempMatrix
+	rm -f $tempStore
+	rm -f $tempCol
+}
+
+# Mean function:  The mean function takes a MxN  matrix and generates a 1xN row vector, where every element on the row is the mean of a column from the original matrix
+# (the first element in the 1xN row vector will be the mean of the first column from the matrix, and the second element will be the mean of the second column, and so on).
+# receives: #1 = Matrix
+# output/returns: Mean generates a 1xN row vector and prints it
+# preconditions: The passed in matrix must be transposed (I wanted to avoid using the cut command, although now that I know more about bash scripting, I think I could
+# have avoided using cut without transposing the matrix).  Also, dimensional data of the matrix is required, so it is necessary to call dims before calling mean
+# misc: NA
+mean() {
+	# The variable mean points to a temporary file that contains the 1xN row vector
+	mean="meanFile$$"
+	# We need the row count in order to properly iterate through the rows of the matrix
+	read rows < "rowCountFile"
+	# initializing rCount to 1 in order to properly iterate through the rows of the matrix
+	rCount=1
+	# Using the read command to process each element of each line of the matrix
+	while read nMatrix
+	do
+		# All the elements in a line/row are added together and put into sum.  It is reset to 0 everytime the while loop restarts
+		sum=0
+		# Sum is divided by count (although in hindsight, I could have just used the dimensional data of the matrix for this) and the result is put into average
+		average=0
+		# Count is used as a divisor of sum in order to generate the mean of each column
+		count=0
+		# This for loop iterates through each element in the line that nmatrix is currently holding
+		for i in $nMatrix
+		do
+			# num is set to the currently selected element on the line
+			num=$i
+			# incrementing count
+			count=$((count + 1))
+			# Adding each element to sum
+			sum=$((sum + num))
+		done
+		# Both of these if statements add column means to the temporary file that mean points to.  If the currently generated mean isn't of the final column
+		# of the matrix, it along with a tab are appended to mean.  If the currently generated mean is of the final column, it along with a newline are appended
+		# to mean.
+		if [ $rCount -lt $rows ]
+		then
+			# this MATH allows the program to properly round up or down
+			average=$(( (sum + (count/2)*( (sum>0)*2-1 )) / count ))
+			# appending the average along with a tab to mean
+			printf "%d\t" $average >> $mean
+		elif [ $rCount -eq $rows ]
+		then
+			average=$(( (sum + (count/2)*( (sum>0)*2-1 )) / count ))
+			# appending the average along with a newline to mean
+			printf "%d\n" $average >> $mean
+		fi
+		# incrementing rCount because we're moving to the next row in the matrix
+		rCount=$((rCount + 1))
+	done < $1
+	# print out line stored in mean
+	cat $mean
+	# cleaning up temporary files
+	rm -f $mean
+}
+
+# Addition function:  This function takes two matrices, adds them together, and then prints/outputs the resulting sum matrix
+# receives: #1 = Matrix1, #2 = Matrix2
+# output/returns: Add prints out a generated sum matrix 
+# preconditions: Row and column counts for the matrices are required for this function to work properly.  Consequently, it is necessary
+# to call dims before calling add.
+# misc: NA
+add () {
+	# Ick points to a temporary file that holds rows from matrix 1
+	ick="tempfile1$$"
+	# Bick points to a temporary file that holds rows from matrix 2
+	bick="tempfile2$$"
+	# sMatrix points to a temporary file that contains the eventual sum matrix of the two passed in matrices
+	sMatrix="file3$$"
+	# rcount is a variable that helps the function iterate through the rows of both matrices (it is compared against the actual
+	# row count of both matrices.  It is iterated by 1 during each run through the while loop, and when it is greater than rows
+	# the while loop ends)
+	rcount=1
+	# moving the column and row counts into variables
+	read cols < "colCountFile"
+	read rows < "rowCountFile"
+	# i and j are variables that are used in tandem with the head and tail commands to help the program select the appropriate lines
+	# from each matrix.  i is used with tail and is always 1, because we always want to pick the last available line after piping through
+	# head.  j is used with head and starts out at ((rows -1) * -1).  So, if the row count is 5, j will equal -4, and when used with head,
+	# that will cause the last 4 lines of the file to be omitted.  SO, if our file has 6 lines, and j = -3, the last 3 lines will be omitted,
+	# and then once we pipe through tail (which uses i, which will always be 1) the final line of the remaining lines (which will be the
+	# third line) will be selected and then redirected into ick or bick.
+	i=1
+	# setting j to be equal to the inverse of rows - 1
+	j=$(((rows - 1) * -1))
+	# This while loop increments through the rows of both matrices
+	while [ $rcount -le $rows ]
+	do
+		# ccount is used by the function to increment through the columns of each matrix.  Everytime the outer while loop restarts
+		# ccount is reset to 1
+		ccount=1
+		# if j doesn't equal 0, we need to use head to properly select a line from the file.  If it does equal 0, we merely need to use tail
+		# -n 1 to get the last line (which is the one we want) of all of the lines
+		if [ $j -ne 0 ]
+		then
+			head -n $j $1 | tail -n $i > $ick
+			head -n $j $2 | tail -n $i > $bick
+		else
+			tail -n $i $1 > $ick
+			tail -n $i $2 > $bick
+		fi
+		# incrementing j by 1, so we select the appropriate line during the next loop
+		j=$((j+1))
+		# This while loop increments through the columns of both matrices.  When it finishes processing the final element in both matrices,
+		# the loop ends, and the outer while loop iterates to the next row in both matrices
+		while [ $ccount -le $cols ]
+		do
+			# Taking the first element the currently selected lines of each matrix and putting them into the variables m1num1 and m2num2.
+			# The rest of both lines are stored in the variables restofm1 and restofm2
+			read m1num1 restofm1 < $ick
+			read m2num2 restofm2 < $bick
+			# The elements are summed together and put into the variable sum
+			sum=$((m1num1 + m2num2))
+			# Each sum is then appended to the sum matrix.  The sum and a tab are appended for all but the sum of the final elements from each matrix line.
+			# When the final sum is appended to the sum matrix, a newline is appended instead of a tab so that we can move onto the next line for the next line of sums
+			if [ $ccount -ne $cols ]
+			then
+				printf "%d\t" $sum >> $sMatrix
+			else
+				printf "%d\n" $sum >> $sMatrix
+			fi
+			# incrementing ccount by 1 so we can move onto the next column in each matrix
+			ccount=$((ccount + 1))
+			# The remainder of each line is redirected back into ick and bick, so we can grab the next element in each line
+			echo "$restofm1" > $ick
+			echo "$restofm2" > $bick
+		done
+		# incrementing rcount by 1, so we can move onto the next row in each matrix
+		rcount=$((rcount + 1))
+	done
+	# Printing out the sum matrix
+	cat $sMatrix
+	# Cleaning out all of the temporary files that have been generated.
+	rm -f $sMatrix
+	rm -f $ick
+	rm -f $bick
+}
+# multiply function: This function takes two matrices, multiplies them together, and prints the result.  Matrix2 must be transposed
+# first (the transpose function has the ability to store a copy of the transposed matrix).  
+#
+# diagram of function:
+# outermost while loop = iterates through matrix1's rows
+# use head and tail commands to select appropriate line from matrix1
+#	Middle while loop = iterates through matrix2's rows
+#	use head and tail commands to select appropriate line from matrix2
+#		innermost while loop = iterates through columns of both matrices
+#		multiply elements on selected lines of matrices by each other (eg element1 from matrix1 times element1 from matrix2)
+#		add products to sumofproducts variable
+#		end of loop
+#	insert sumofproducts into product matrix 
+#	end of loop
+# end of loop
+#
+# receives: #1 = Matrix1 (with some preconditions), #2 = Matrix2 (again with some preconditions)
+# returns: Nothing - the function prints out the product 
+# preconditions: The row count of Matrix1 is needed, so Matrix1 must be run through dims.  A transposed version of Matrix2 must
+# be passed to multiply.  It is also necessary use dims to generate the row count and column count of the newly tranposed Matrix2.
+# (use the m2 option to store those dimensions in rowCountFile2 and colCountFile2). 
+# misc: this function cleans up all of the files that it generates (the calling function must take care of everything else)
+multiply () {
+	# ick is used to store individual lines from matrix1 and bick is used to store individual lines from matrix2
+	ick="tempfile1$$"
+	bick="tempfile2$$"
+	pMatrix="file3$$"
+	# rcount is used to keep track of how many rows from matrix 1 have been processed.  When a row is completely multiplied
+	# against matrix2, rcount is incremented by 1
+	rcount=1
+	# cols allows the function to increment through each element on a line in both matrix1 and matrix2 (since matrix2 has been
+	# transposed, its column count is identical to matrix1's).  
+	# rows allows the function increment through the rows of matrix2
+	# m1rows allows the function to increment through the rows of matrix1
+	read cols < "colCountFile2"
+	read rows < "rowCountFile2"
+	read m1rows < "rowCountFile"
+	# i and j are used when multiply() is using the head and tail commands to select the appropriate lines from both matrices.
+	# head starts out at ((rowcount - 1) * -1).  So, if a matrix has 5 rows, the code "head -n -4" will omit the last 4 lines.
+	# We then pipe this through tail, which uses i, which is always 1.  the code "tail -n 1" will omit everything but the last
+	# line.  The outer while loop (which increments through the rows of matrix1) increments j during every loop.
+	# During the first iteration of the loop, line 1 will be selected, and during the second iteration, the second line will be selected
+	# and so on.
+	i=1
+	# setting j to ((rowcount -1) * -1))
+	j=$(((m1rows - 1) * -1))
+	# This is the outermost loop and it, again, iterates through the rows of matrix1.  rcount starts at 1 and is incremented by
+	# 1 during each run through the while loop.  The loop ends when rcount is greater than matrix1's row count
+	while [ $rcount -le $m1rows ]
+	do
+		matrix2rowcount=1
+		# j1 is used to select rows from matrix2 in the next while loop
+		j1=$(((rows - 1) * -1))
+		# when j hits 0, we no long need to use head (since we aren't omitting any lines with head at this point).
+		if [ $j -ne 0 ]
+		then
+			head -n $j $1 | tail -n $i > $ick
+		else
+			tail -n $i $1 > $ick
+		fi
+		# we need to store selected line from matrix1 in a variable, because we'll need to restore it to the ick variable after the inner-most while loop
+		# finishes a run
+		read entireline < $ick
+		# incrementing j (so next iteration of while loop moves to next row in matrix1)
+		j=$((j+1))
+		# this while loop iterates through the rows of matrix2
+		while [ $matrix2rowcount -le $rows ]
+		do
+			# initializing ccount, which is a variable that we use to iterate through the columns of both matrices
+			ccount=1
+			# After we multiply two elements together (an element from each matrix), the product is added to sumofproducts.
+			# Sumofproducts is reset to 0 everytime this while loop restarts (after sumofproducts is inserted into a spot in the product
+			# matrix, we need to generate a new sumofproducts)
+			sumofproducts=0
+			# product1
+			product1=0
+			# selecting appropriate line from matrix2 (same as method used above for matrix1)
+			if [ $j1 -ne 0 ]
+			then
+				head -n $j1 $2 | tail -n $i > $bick
+			else
+				tail -n $i $2 > $bick
+			fi
+			# this is the innermost loop, and it iterates through the columns of both matrices (from element to element)
+			# as it iterates to new elements, it multiplies them against each other (eg. element1 from matrix1 against element1 from matrix2).
+			# It then stores the product in sumofproducts (which is appended to the product matrix)
+			while [ $ccount -le $cols ] 
+			do
+				# pulling first element from a line (and storing it in a variable) and then storing of the line in another variable
+				# (for each matrix).  The elements stored in m1num1 and m2num2 are multiplied against each other and then added to 
+				# sumofproducts.  the remaining portions of each line are stored in ick (remaining part of matrix1) and bick (remaining part
+				# of matrix2).  The loop starts over and repeats the process (on the remaining portions of each line obviously)
+				read m1num1 restofm1 < $ick
+				read m2num2 restofm2 < $bick
+				product1=$((m1num1 * m2num2))
+				sumofproducts=$((sumofproducts + product1))
+				ccount=$((ccount + 1))
+				echo "$restofm1" > $ick
+				echo "$restofm2" > $bick
+			done
+			# sumofproducts is appended to the product matrix.  When the while loop has iterated to the final row of matrix2, a newline 
+			# is added instead of a tab (so that we can start printing on the next line of the product matrix)
+			if [ $matrix2rowcount -ne $rows ]
+			then
+				printf "%d\t" $sumofproducts >> $pMatrix
+			else
+				printf "%d\n" $sumofproducts >> $pMatrix
+			fi
+			# incrementing j1 (variable used to help pick the appropriate line in matrix2 at beginning of the middle loop)
+			# Also incrementing the matrix2rowcount which determines how long the middle loop will run
+			j1=$((j1+1))
+			matrix2rowcount=$((matrix2rowcount + 1))
+			# restoring entire line back to ick, so that we resume multiplication
+			echo "$entireline" > $ick
+		done
+		# incrementing rcount, which determines how long the outermost loop will ru
+		rcount=$((rcount + 1))
+	done
+# catting out product matrix
+cat $pMatrix
+# cleaning up files created by multiply()
+rm -f $pMatrix
+rm -f $ick
+rm -f $bick
+}
+
+# this if statement checks the first argument.  If its contents equal any of the names of the functions (dims, transpose, mean,
+# add, and multiply), the program starts the process of running the passed in matrix or matrices through the selected function
+if [ $1 = "dims" ]
+then
+	# This is code taken from piazza and modified to work with my program.  It is essentially checking to see if a matrix was provided
+	# via stdin or if it was passed in as an argument.  If the argument count equals 1, then the matrix was provided via stdin, so
+	# the matrix is attached to the datafilepath variable via the cat command (which points to a file called datafile).  If the argument count equals 2,
+	# then the matrix has obviously been passed in as an argument (the function call is argument), so datapathfile is simply assigned
+	# the value of $2 (the second argument).  This if statement also checks to make sure the correct number of arguments were passed in
+	# when matrix was executed (1 or 2 arguments)
+	datafilepath="datafile$$"
+	if [ "$#" = "1" ]
+	then
+		cat > "$datafilepath"
+	elif [ "$#" = "2" ]
+	then
+		datafilepath=$2
+	else
+		echo "Incorrect number of arguments!" 1>&2
+		exit 1
+	fi
+	# This if statement checks to make sure that we're dealing with a readable file.  If the check is passed, dims is called.
+	# if it isn't, an error message is sent to stderr, and a value of 1 is returned
+	if [[ -r $datafilepath ]]
+	then
+		dims $datafilepath "no"
+	else
+		echo "File not readable!" 1>&2
+		exit 1
+	fi
+	# cleaning up temp files
+	rm -f datafile$$
+# this else if calls transpose.  Its error-checking is identical to what is found in dims, so check the comments for that if you're curious about that. The
+# biggest difference is the call to the transpose function and the required setup
+elif [ $1 = "transpose" ]
+then
+if [ "$#" = "1" ]
+	then
+		cat > "$datafilepath"
+	elif [ "$#" = "2" ]
+	then
+		datafilepath=$2
+	else
+		echo "Incorrect number of arguments!" 1>&2
+		exit 1
+	fi
+	if [[ -r $datafilepath ]]
+	then
+		# Transpose requires the dimensions of the the matrix that it is processing, so a call to dims is necessary (dims stored row and column counts
+		# in temporary variables (this is elaborated on in the description of the dims function))
+		dims $datafilepath "m1"
+		# Since we have generated dimension data for the matrix, we can now call the transpose function.  We're passing in the matrix with the string "no", 
+		# which lets transpose know that it is necessary to print out the transposed matrix
+		transpose $datafilepath "print"
+		# cleaning up temporary files
+		rm -f "rowCountFile"
+		rm -f "colCountFile"
+	else
+		echo "File not readable!" 1>&2
+		exit 1
+	fi
+	rm -f datafile$$
+# This else-if calls the mean function (if all of the error checks are passed).  Again, this uses the same error-checking code that is found in dims and transpose.  An 
+# explanation for all of that is found above the code that calls the dims function
+elif [ $1 = "mean" ]
+then
+datafilepath="datafile$$"
+	if [ "$#" = "1" ]
+	then
+		cat > "$datafilepath"
+	elif [ "$#" = "2" ]
+	then
+		datafilepath=$2
+	else
+		echo "Incorrect number of arguments!" 1>&2
+		exit 1
+	fi
+	if [[ -r "$datafilepath" ]]
+	then
+	# Mean requires the dimensional data of the matrix, and it also requires that the matrix be transposed (the reasons for this are explained in descriptiion of the
+	# mean function).  This initial dims call is necessary to be able to transpose the matrix.
+		dims $2 "m1"
+		transpose $2 "noPrint"
+		# We need the dimensional data of the transposed matrix, so we call the dims function again
+		dims "matrixcopy" "m1"
+		# After generating new dimensional data, we call the mean function and pass in the transposed matrix
+		mean "matrixcopy"
+	else
+		echo "File not readable!" 1>&2
+		exit 1
+	fi
+	rm -f datafile$$
+# This else-if calls the add function.   It isn't ncessary to check to see if the matrix is in stdin (that's only for the unary functions), so we only check to make sure
+# readable files have been passed in and that the correct number of arguments have been passed in (3 total - the call for add and the 2 matrices).  If any of these checks
+# are failed, an error message is sent to stderr, and a value of 1 is returned.
+elif [ $1 = "add" ]
+then
+# Checking to see if we have readable files and if we have the correct number of arguments
+	if [[ -r $2 && -r $3 ]] && [[ "$#" = 3 ]]
+	then
+		# Before we call add, we need to make sure that the dimensions of the two matrices actually allow for addition (meaning, the matrices have identical
+		# dimensions).  So, dims is called twice (m1 and m2 tell dims to store the dimensions in separate temporary files for each matrix )
+		dims $2 "m1"
+		dims $3 "m2"
+		read c1 <"colCountFile"
+		read r1 <"rowCountFile"
+		read c2 <"colCountFile2"
+		read r2 <"rowCountFile2"
+		# checking to see if the dimensions of the matrices match up.  If so, add is called and both matrices are passed in as arguments (matrix 1 as argument 1
+		# and matrix 2 as argument 2).  If the dimensions don't match, an error message is sent to stderr, and a value of 1 is returned
+		if [ $c1 -eq $c2 ] && [ $r1 -eq $r2 ]
+		then
+			add $2 $3
+		else
+			echo "Dimensions of matrices do not allow for addition." 1>&2
+			exit 1
+		fi
+	else
+		echo "Unreadable File or incorrect number of arguments!" 1>&2
+		exit 1
+	fi
+	# cleaniing up temporary files
+	rm -f "colCountFile"
+	rm -f "rowCountFile"
+	rm -f "colCountFile2"
+	rm -f "rowCountFile2"
+# This else if calls the multiply function (if a series of check are passed, of course).  Like add, both matrices are checked to make sure they are readable files.  Additionally
+# the number of arguments is checked.  The number of arguments must equal 3 (1 for the actually multiply call and 2 for the matrices)
+elif [ $1 = "multiply" ]
+then
+if [[ -r $2 && -r $3 ]] && [[ "$#" = 3 ]]
+	then
+		# Before we can call multiply, we first need to see if the dimensions of the two matrices allow for multiplication (the number of columns in matrix 1
+		# must equal the number of rows in matrix 2).  First, we call dims and get dimensional data for matrix 1
+		dims $2 "m1"
+		# This data will be replaced by subsequent calls to dims, so it is necessary to store the generated dimensions in variables
+		read c1 < "colCountFile"
+		read r1 < "rowCountFile"
+		# dims is called again to get dimensional data for matrix 2.
+		dims $3 "m1"
+		read r2 < "rowCountFile"
+		# this if statement check to see if the dimensions allow us to multiply the two matrices.  The columns of matrix 1 must equal the rows of matrix 2
+		if [ $c1 -eq $r2 ]
+		then
+			# we need to call transpose 1 more time, because the multiply function requires that matrix 2 be transposed (I chose to do this, because I wanted to
+			# be able to multiply rows against rows as opposed to multiplying rows against colummns).  It isn't necessary to call dims before this transpose call
+			# because we already have matrix 2's dimensional data stored from a previous dims call
+			transpose $3 "noprint"
+			# retoring matrix 1's dimensional data to colCountFile and rowCountFile, since we need this information for multiply
+			echo "$c1" > "colCountFile"
+			echo "$r1" > "rowCountFile"
+			# We need the dimensional data for the newly transposed matrix 2, so we call dims again
+			dims "matrixcopy" "m2"
+			# multiply is called and is passed matrix 1 and the transposed matrix 2 as arguments
+			multiply $2 "matrixcopy"
+		else	
+			echo "Dimensions of matrices do not allow for multiplication." 1>&2
+			exit 1
+		fi
+	else
+		echo "Unreadable File or incorrect number of arguments!" 1>&2
+		exit 1
+	fi
+	# cleaning up temporary files
+	rm -f "matrixcopy"
+	rm -f "rowCountFile"
+	rm -f "rowCountFile2"
+	rm -f "colCountFile"
+	rm -f "colCountFile2"
+# If a command that doesn't equal "dims", "transpose", "mean", "addition", or "multiply" is passed to matrix, an error message is sent to stderr and a value of 1 is returned
+else
+	echo "Bad command!" 1>&2
+	exit 1
+fi
